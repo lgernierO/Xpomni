@@ -132,7 +132,6 @@ private fun XpOmniModule.resolveHotReloadHook(
             "screenshot" -> resolveScreenshotHotReloadHook(hookId, executable)
             "keyguard" -> resolveKeyguardHotReloadHook(hookId, executable)
             "quick_settings" -> resolveQuickSettingsHotReloadHook(hookId, executable)
-            "traffic" -> resolveStatusBarTrafficHotReloadHook(hookId, executable)
             "pixel" -> resolvePixelLauncherHotReloadHook(hookId, executable)
             else -> null
         }
@@ -145,7 +144,6 @@ private fun XpOmniModule.resolveHotReloadHook(
         ?: resolveScreenshotHotReloadHook(hookId, executable)
         ?: resolveKeyguardHotReloadHook(hookId, executable)
         ?: resolveQuickSettingsHotReloadHook(hookId, executable)
-        ?: resolveStatusBarTrafficHotReloadHook(hookId, executable)
         ?: resolvePixelLauncherHotReloadHook(hookId, executable)
 }
 

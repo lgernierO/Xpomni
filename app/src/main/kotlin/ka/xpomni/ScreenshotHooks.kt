@@ -3,6 +3,7 @@
 package ka.xpomni
 
 import android.hardware.display.DisplayManager
+import android.media.MediaActionSound
 import android.media.MediaPlayer
 import android.os.Build
 import android.util.Log
@@ -30,6 +31,7 @@ private const val EXECUTOR_COROUTINE_DISPATCHER_IMPL =
 private const val SCREENSHOT_WINDOW_STATE_HOOK_ID = "screenshot.window_state"
 private const val SCREENSHOT_CAPTURE_HOOK_ID = "screenshot.capture"
 private const val SCREENSHOT_MEDIA_HOOK_ID = "screenshot.media"
+private const val SCREENSHOT_MEDIA_ACTION_HOOK_ID = "screenshot.media_action"
 private const val SCREENSHOT_DISPATCHER_HOOK_ID = "screenshot.dispatcher"
 private const val SCREENSHOT_SOUND_CONSTRUCTOR_HOOK_ID = "screenshot.sound_constructor"
 private const val SCREENSHOT_DISPLAY_HOOK_ID = "screenshot.display"
@@ -181,6 +183,7 @@ private fun writeSecureCaptureFlag(
 
 internal fun XpOmniModule.hookSystemUiScreenshotMute(classLoader: ClassLoader) {
     hookScreenshotMediaPlayerStart()
+    hookScreenshotMediaActionSoundPlay()
 
     runOptionalHook("hook screenshot sound dispatcher") {
         hookScreenshotSoundDispatcher(classLoader)
@@ -195,6 +198,17 @@ private fun XpOmniModule.hookScreenshotMediaPlayerStart() {
     val start = MediaPlayer::class.java.getDeclaredMethod("start")
 
     intercept(start, SCREENSHOT_MEDIA_HOOK_ID) {
+        handleScreenshotMedia(this)
+    }
+}
+
+private fun XpOmniModule.hookScreenshotMediaActionSoundPlay() {
+    val play = MediaActionSound::class.java.getDeclaredMethod(
+        "play",
+        Int::class.javaPrimitiveType!!,
+    )
+
+    intercept(play, SCREENSHOT_MEDIA_ACTION_HOOK_ID) {
         handleScreenshotMedia(this)
     }
 }
@@ -374,6 +388,8 @@ internal fun XpOmniModule.resolveScreenshotHotReloadHook(
         executable.name == "nativeCaptureDisplay" || executable.name == "nativeCaptureLayers"
     val legacyMedia =
         executable.declaringClass == MediaPlayer::class.java && executable.name == "start"
+    val legacyMediaAction =
+        executable.declaringClass == MediaActionSound::class.java && executable.name == "play"
     val legacyDispatcher =
         className == TAKE_SCREENSHOT_EXECUTOR_IMPL && executable.name == "getScreenshotController"
     val legacySoundConstructor =
@@ -421,6 +437,9 @@ internal fun XpOmniModule.resolveScreenshotHotReloadHook(
         }
 
         hookId == SCREENSHOT_MEDIA_HOOK_ID || legacyMedia ->
+            Hooker { chain -> handleScreenshotMedia(chain) }
+
+        hookId == SCREENSHOT_MEDIA_ACTION_HOOK_ID || legacyMediaAction ->
             Hooker { chain -> handleScreenshotMedia(chain) }
 
         hookId == SCREENSHOT_DISPATCHER_HOOK_ID || legacyDispatcher -> {

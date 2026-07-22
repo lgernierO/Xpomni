@@ -3,21 +3,17 @@
 package ka.xpomni
 
 import android.content.Intent
-import android.widget.TextView
 import io.github.libxposed.api.XposedInterface.Chain
 import io.github.libxposed.api.XposedInterface.Hooker
 import java.lang.reflect.Constructor
 import java.lang.reflect.Executable
-import java.util.concurrent.ConcurrentHashMap
 import java.util.Locale
 
 private const val KEYGUARD_INDICATION_CONTROLLER_GOOGLE =
     "com.google.android.systemui.statusbar.KeyguardIndicationControllerGoogle"
 private const val KEYGUARD_INDICATION_CONTROLLER =
     "com.android.systemui.statusbar.KeyguardIndicationController"
-private const val CARRIER_TEXT_CONTROLLER = "com.android.keyguard.CarrierTextController"
 private const val BATTERY_STATUS = "com.android.settingslib.fuelgauge.BatteryStatus"
-private const val EMPTY_CARRIER_TEXT = ""
 
 private const val EXTRA_MAX_CHARGING_CURRENT = "max_charging_current"
 private const val EXTRA_MAX_CHARGING_VOLTAGE = "max_charging_voltage"
@@ -26,8 +22,6 @@ private const val MICRO_UNITS = 1_000_000f
 private const val TENTHS = 10f
 private const val KEYGUARD_BATTERY_HOOK_ID = "keyguard.battery"
 private const val KEYGUARD_POWER_HOOK_ID = "keyguard.power"
-private const val KEYGUARD_CARRIER_INIT_HOOK_ID = "keyguard.carrier_init"
-private const val KEYGUARD_CARRIER_UPDATE_HOOK_ID = "keyguard.carrier_update"
 
 @Volatile
 private var maxChargingCurrentAmps = 0f
@@ -37,8 +31,6 @@ private var maxChargingVoltageVolts = 0f
 
 @Volatile
 private var batteryTemperatureCelsius = 0f
-
-private val carrierTextCallbackClasses = ConcurrentHashMap.newKeySet<Class<*>>()
 
 internal fun XpOmniModule.hookKeyguardChargingInfo(classLoader: ClassLoader) {
     val indicationClass = classLoader.loadFirstClass(
@@ -56,14 +48,6 @@ internal fun XpOmniModule.hookKeyguardChargingInfo(classLoader: ClassLoader) {
     }
 }
 
-internal fun XpOmniModule.hookKeyguardCarrierText(classLoader: ClassLoader) {
-    val carrierTextControllerClass = classLoader.loadClass(CARRIER_TEXT_CONTROLLER)
-
-    hookMethods(carrierTextControllerClass, KEYGUARD_CARRIER_INIT_HOOK_ID, "onInit") {
-        handleCarrierTextInit(this)
-    }
-}
-
 internal fun XpOmniModule.resolveKeyguardHotReloadHook(
     hookId: String?,
     executable: Executable,
@@ -74,22 +58,12 @@ internal fun XpOmniModule.resolveKeyguardHotReloadHook(
         (className == KEYGUARD_INDICATION_CONTROLLER_GOOGLE ||
             className == KEYGUARD_INDICATION_CONTROLLER) &&
             executable.name == "computePowerIndication"
-    val legacyCarrierInit =
-        className == CARRIER_TEXT_CONTROLLER && executable.name == "onInit"
-    val legacyCarrierUpdate = executable.name == "updateCarrierInfo"
-
     return when {
         hookId == KEYGUARD_BATTERY_HOOK_ID || legacyBattery ->
             Hooker { chain -> handleBatteryStatus(chain) }
 
         hookId == KEYGUARD_POWER_HOOK_ID || legacyPower ->
             Hooker { chain -> handlePowerIndication(chain) }
-
-        hookId == KEYGUARD_CARRIER_INIT_HOOK_ID || legacyCarrierInit ->
-            Hooker { chain -> handleCarrierTextInit(chain) }
-
-        hookId == KEYGUARD_CARRIER_UPDATE_HOOK_ID || legacyCarrierUpdate ->
-            Hooker { null }
 
         else -> null
     }
@@ -106,16 +80,6 @@ private fun handlePowerIndication(chain: Chain): Any? =
     with(chain) {
         val result = proceed()
         if (result is String) appendChargingInfo(result) else result
-    }
-
-private fun XpOmniModule.handleCarrierTextInit(chain: Chain): Any? =
-    with(chain) {
-        proceed().also {
-            thisObject?.clearCarrierText()
-            thisObject
-                ?.readField("mCarrierTextCallback")
-                ?.let { callback -> hookCarrierTextUpdates(callback) }
-        }
     }
 
 private fun Intent.cacheChargingInfo() {
@@ -140,20 +104,6 @@ private fun appendChargingInfo(text: String): String {
         current,
         temperature,
     )
-}
-
-private fun Any.clearCarrierText() {
-    val view = readField("mView") as? TextView ?: return
-    view.post { view.text = EMPTY_CARRIER_TEXT }
-}
-
-private fun XpOmniModule.hookCarrierTextUpdates(callback: Any) {
-    val callbackClass = callback.javaClass
-    if (!carrierTextCallbackClasses.add(callbackClass)) return
-
-    hookMethods(callbackClass, KEYGUARD_CARRIER_UPDATE_HOOK_ID, "updateCarrierInfo") {
-        null
-    }
 }
 
 private fun ClassLoader.loadFirstClass(vararg names: String): Class<*> {

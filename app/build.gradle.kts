@@ -114,18 +114,18 @@ val localProperties = Properties().apply {
 
 android {
     compileSdk {
-        version = release(36) {
+        version = release(37) {
             minorApiLevel = 1
         }
     }
-    buildToolsVersion = "36.1.0"
+    buildToolsVersion = "37.0.0"
 
     defaultConfig {
         applicationId = "ka.xpomni"
         minSdk = appMinSdk
-        targetSdk = 36
-        versionCode = 13
-        versionName = "1.3.0"
+        targetSdk = 37
+        versionCode = 14
+        versionName = "1.4.0"
     }
 
     signingConfigs {
