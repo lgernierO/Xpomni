@@ -36,6 +36,7 @@ private const val SLEEP_SENDER_PERMISSION = "android.permission.BIND_APPWIDGET"
 private const val PIXEL_BADGE_VIEW_HOOK_ID = "pixel.badge_view"
 private const val PIXEL_BADGE_APPLY_HOOK_ID = "pixel.badge_apply"
 private const val PIXEL_BADGE_ICON_HOOK_ID = "pixel.badge_icon"
+private const val PIXEL_NO_BADGE_FLAG = 2
 private const val PIXEL_DOUBLE_TAP_HOOK_ID = "pixel.double_tap"
 private const val PIXEL_NAVBAR_PILL_HOOK_ID = "pixel.navbar_pill"
 private const val PIXEL_NAVBAR_INSETS_HOOK_ID = "pixel.navbar_insets"
@@ -266,7 +267,14 @@ private fun handlePixelBadgeApply(chain: Chain): Any? =
 
 private fun handlePixelBadgeIcon(chain: Chain): Any? =
     with(chain) {
-        proceed().also { icon -> icon?.clearLauncherDrawableBadge() }
+        val flagIndex = args.indexOfFirst { it is Int }
+        if (flagIndex < 0) {
+            return@with proceed().also { icon -> icon?.clearLauncherDrawableBadge() }
+        }
+
+        val updatedArgs = argsArray()
+        updatedArgs[flagIndex] = (updatedArgs[flagIndex] as Int) or PIXEL_NO_BADGE_FLAG
+        proceed(updatedArgs)
     }
 
 private fun handlePixelDoubleTap(chain: Chain): Any? =
