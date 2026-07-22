@@ -34,7 +34,7 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-37.1" "build-tools;37.0.0"
 
       - name: Build release APK
-        run: ./gradlew --no-daemon --stacktrace assembleRelease
+        run: bash ./gradlew --no-daemon --stacktrace assembleRelease
 
       - name: Verify APK
         run: |
