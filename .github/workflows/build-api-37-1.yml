@@ -89,8 +89,8 @@ jobs:
             "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
           done
 
-          DEBUG_CERT="$($BUILD_TOOLS/apksigner verify --print-certs "$DEBUG_OUT" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
-          RELEASE_CERT="$($BUILD_TOOLS/apksigner verify --print-certs "$RELEASE_OUT" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+          DEBUG_CERT="$($BUILD_TOOLS/apksigner verify --print-certs "$DEBUG_OUT" | awk '/certificate SHA-256 digest:/ {print $NF; exit}')"
+          RELEASE_CERT="$($BUILD_TOOLS/apksigner verify --print-certs "$RELEASE_OUT" | awk '/certificate SHA-256 digest:/ {print $NF; exit}')"
           test -n "$DEBUG_CERT"
           test "$DEBUG_CERT" = "$RELEASE_CERT" || {
             echo "Debug and release APK signatures differ." >&2

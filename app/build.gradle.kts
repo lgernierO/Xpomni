@@ -144,6 +144,11 @@ android {
             vcsInfo.include = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        debug {
+            if (localProperties.getProperty("storeFile") != null) {
+                signingConfig = signingConfigs.getByName("config")
+            }
+        }
         release {
             signingConfig = if (localProperties.getProperty("storeFile") != null) {
                 signingConfigs.getByName("config")
