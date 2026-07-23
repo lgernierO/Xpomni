@@ -276,7 +276,20 @@ tasks.register("stripReleaseDexDebugInfo") {
             ZipFile(apk).use { zip ->
                 zip.entries().asSequence().forEach { entry ->
                     if (!shouldDropApkEntry(entry, dexEntryName)) {
-                        output.putNextEntry(ZipEntry(entry.name))
+                        val outputEntry = ZipEntry(entry.name).apply {
+                            // Android 11+ rejects target-R+ APKs when resources.arsc is
+                            // compressed. Preserve all originally uncompressed entries;
+                            // zipalign will add the required data alignment afterwards.
+                            if (!entry.isDirectory &&
+                                (entry.method == ZipEntry.STORED || entry.name == "resources.arsc")
+                            ) {
+                                method = ZipEntry.STORED
+                                size = entry.size
+                                compressedSize = entry.size
+                                crc = entry.crc
+                            }
+                        }
+                        output.putNextEntry(outputEntry)
                         if (!entry.isDirectory) {
                             zip.getInputStream(entry).use { input ->
                                 input.copyTo(output)
@@ -297,7 +310,7 @@ tasks.register("stripReleaseDexDebugInfo") {
         }
 
         providers.exec {
-            commandLine(zipalign.absolutePath, "-f", "-p", "4", unsignedApk.absolutePath, alignedApk.absolutePath)
+            commandLine(zipalign.absolutePath, "-f", "-P", "16", "4", unsignedApk.absolutePath, alignedApk.absolutePath)
         }.result.get().assertNormalExitValue()
 
         val signing = android.buildTypes.getByName("release").signingConfig

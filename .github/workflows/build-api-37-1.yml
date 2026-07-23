@@ -36,9 +36,19 @@ jobs:
       - name: Build release APK
         run: bash ./gradlew --no-daemon --stacktrace assembleRelease
 
-      - name: Verify APK
+      - name: Verify APK installability
+        shell: bash
         run: |
-          test -s app/build/outputs/apk/release/app-release.apk
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          METHOD="$(unzip -lv "$APK" resources.arsc | awk '$NF == "resources.arsc" {print $2}')"
+          test "$METHOD" = "Stored" || {
+            echo "resources.arsc must be uncompressed, got: $METHOD" >&2
+            exit 1
+          }
+          "$ANDROID_SDK_ROOT/build-tools/37.0.0/zipalign" -c -P 16 -v 4 "$APK"
+          "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK"
           sha256sum app/build/outputs/apk/release/*.apk
 
       - name: Upload APK
