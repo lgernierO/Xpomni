@@ -1,4 +1,4 @@
-name: Build API 37.1 APK
+name: Build API 37.1 APKs
 
 on:
   push:
@@ -16,45 +16,97 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install API 37.1 SDK
         run: |
           yes | sdkmanager --licenses >/dev/null
           sdkmanager "platform-tools" "platforms;android-37.1" "build-tools;37.0.0"
 
-      - name: Build release APK
-        run: bash ./gradlew --no-daemon --stacktrace assembleRelease
+      - name: Configure release signing
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.XPOMNI_RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.XPOMNI_RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.XPOMNI_RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.XPOMNI_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${RELEASE_KEYSTORE_BASE64:?Missing release keystore secret}"
+          : "${RELEASE_STORE_PASSWORD:?Missing release store password secret}"
+          : "${RELEASE_KEY_ALIAS:?Missing release key alias secret}"
+          : "${RELEASE_KEY_PASSWORD:?Missing release key password secret}"
 
-      - name: Verify APK installability
+          KEYSTORE="$RUNNER_TEMP/xpomni-release.jks"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+          {
+            printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT"
+            printf 'storeFile=%s\n' "$KEYSTORE"
+            printf 'storePassword=%s\n' "$RELEASE_STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$RELEASE_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$RELEASE_KEY_PASSWORD"
+          } > local.properties
+          chmod 600 local.properties
+
+      - name: Build release and debug APKs
+        run: bash ./gradlew --no-daemon --stacktrace assembleRelease assembleDebug
+
+      - name: Verify APK installability and signatures
         shell: bash
         run: |
           set -euo pipefail
-          APK=app/build/outputs/apk/release/app-release.apk
-          test -s "$APK"
-          METHOD="$(unzip -lv "$APK" resources.arsc | awk '$NF == "resources.arsc" {print $2}')"
-          test "$METHOD" = "Stored" || {
-            echo "resources.arsc must be uncompressed, got: $METHOD" >&2
+          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/37.0.0"
+          RELEASE_APK="app/build/outputs/apk/release/app-release.apk"
+          DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          for APK in "$RELEASE_APK" "$DEBUG_APK"; do
+            test -s "$APK"
+            METHOD="$(unzip -lv "$APK" resources.arsc | awk '$NF == "resources.arsc" {print $2}')"
+            test "$METHOD" = "Stored" || {
+              echo "$APK: resources.arsc must be uncompressed, got: $METHOD" >&2
+              exit 1
+            }
+            "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$APK"
+            "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          done
+
+          RELEASE_CERT="$("$BUILD_TOOLS/apksigner" verify --print-certs "$RELEASE_APK" | awk -F': ' '/certificate SHA-256 digest/ {print $2; exit}')"
+          DEBUG_CERT="$("$BUILD_TOOLS/apksigner" verify --print-certs "$DEBUG_APK" | awk -F': ' '/certificate SHA-256 digest/ {print $2; exit}')"
+          test -n "$RELEASE_CERT"
+          test -n "$DEBUG_CERT"
+          test "$RELEASE_CERT" != "$DEBUG_CERT" || {
+            echo "Release and debug APKs must use different signing certificates" >&2
             exit 1
           }
-          "$ANDROID_SDK_ROOT/build-tools/37.0.0/zipalign" -c -P 16 -v 4 "$APK"
-          "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK"
-          sha256sum app/build/outputs/apk/release/*.apk
+          printf 'Release certificate SHA-256: %s\n' "$RELEASE_CERT"
+          printf 'Debug certificate SHA-256: %s\n' "$DEBUG_CERT"
+          sha256sum "$RELEASE_APK" "$DEBUG_APK"
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Upload release APK
+        uses: actions/upload-artifact@v7
         with:
-          name: Xpomni-api-37.1
-          path: app/build/outputs/apk/release/*.apk
+          name: Xpomni-api-37.1-release
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: Xpomni-api-37.1-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          compression-level: 0
           retention-days: 30
