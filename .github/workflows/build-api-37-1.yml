@@ -33,80 +33,107 @@ jobs:
           yes | sdkmanager --licenses >/dev/null
           sdkmanager "platform-tools" "platforms;android-37.1" "build-tools;37.0.0"
 
-      - name: Configure release signing
+      - name: Restore persistent signing key
         shell: bash
         env:
-          RELEASE_KEYSTORE_BASE64: ${{ secrets.XPOMNI_RELEASE_KEYSTORE_BASE64 }}
-          RELEASE_STORE_PASSWORD: ${{ secrets.XPOMNI_RELEASE_STORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.XPOMNI_RELEASE_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.XPOMNI_RELEASE_KEY_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.XPOMNI_RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.XPOMNI_RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.XPOMNI_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.XPOMNI_RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          : "${RELEASE_KEYSTORE_BASE64:?Missing release keystore secret}"
-          : "${RELEASE_STORE_PASSWORD:?Missing release store password secret}"
-          : "${RELEASE_KEY_ALIAS:?Missing release key alias secret}"
-          : "${RELEASE_KEY_PASSWORD:?Missing release key password secret}"
+          test -n "$KEYSTORE_BASE64"
+          test -n "$STORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
 
           KEYSTORE="$RUNNER_TEMP/xpomni-release.jks"
-          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
           chmod 600 "$KEYSTORE"
+
           {
             printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT"
             printf 'storeFile=%s\n' "$KEYSTORE"
-            printf 'storePassword=%s\n' "$RELEASE_STORE_PASSWORD"
-            printf 'keyAlias=%s\n' "$RELEASE_KEY_ALIAS"
-            printf 'keyPassword=%s\n' "$RELEASE_KEY_PASSWORD"
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
           } > local.properties
           chmod 600 local.properties
 
-      - name: Build release and debug APKs
-        run: bash ./gradlew --no-daemon --stacktrace assembleRelease assembleDebug
+      - name: Build debug and release APKs
+        run: bash ./gradlew --no-daemon --stacktrace assembleDebug assembleRelease
 
-      - name: Verify APK installability and signatures
+      - name: Verify and stage APKs
         shell: bash
         run: |
           set -euo pipefail
           BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/37.0.0"
-          RELEASE_APK="app/build/outputs/apk/release/app-release.apk"
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
+          RELEASE_APK="app/build/outputs/apk/release/app-release.apk"
+          DEBUG_OUT="dist/Xpomni-api-37.1-debug.apk"
+          RELEASE_OUT="dist/Xpomni-api-37.1-release.apk"
 
-          for APK in "$RELEASE_APK" "$DEBUG_APK"; do
-            test -s "$APK"
+          test -s "$DEBUG_APK"
+          test -s "$RELEASE_APK"
+          mkdir -p dist
+          cp "$DEBUG_APK" "$DEBUG_OUT"
+          cp "$RELEASE_APK" "$RELEASE_OUT"
+
+          for APK in "$DEBUG_OUT" "$RELEASE_OUT"; do
             METHOD="$(unzip -lv "$APK" resources.arsc | awk '$NF == "resources.arsc" {print $2}')"
             test "$METHOD" = "Stored" || {
-              echo "$APK: resources.arsc must be uncompressed, got: $METHOD" >&2
+              echo "resources.arsc must be uncompressed in $APK, got: $METHOD" >&2
               exit 1
             }
             "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$APK"
             "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
           done
 
-          RELEASE_CERT="$("$BUILD_TOOLS/apksigner" verify --print-certs "$RELEASE_APK" | awk -F': ' '/certificate SHA-256 digest/ {print $2; exit}')"
-          DEBUG_CERT="$("$BUILD_TOOLS/apksigner" verify --print-certs "$DEBUG_APK" | awk -F': ' '/certificate SHA-256 digest/ {print $2; exit}')"
-          test -n "$RELEASE_CERT"
+          DEBUG_CERT="$($BUILD_TOOLS/apksigner verify --print-certs "$DEBUG_OUT" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+          RELEASE_CERT="$($BUILD_TOOLS/apksigner verify --print-certs "$RELEASE_OUT" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
           test -n "$DEBUG_CERT"
-          test "$RELEASE_CERT" != "$DEBUG_CERT" || {
-            echo "Release and debug APKs must use different signing certificates" >&2
+          test "$DEBUG_CERT" = "$RELEASE_CERT" || {
+            echo "Debug and release APK signatures differ." >&2
             exit 1
           }
-          printf 'Release certificate SHA-256: %s\n' "$RELEASE_CERT"
-          printf 'Debug certificate SHA-256: %s\n' "$DEBUG_CERT"
-          sha256sum "$RELEASE_APK" "$DEBUG_APK"
 
-      - name: Upload release APK
-        uses: actions/upload-artifact@v7
-        with:
-          name: Xpomni-api-37.1-release
-          path: app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 30
+          sha256sum "$DEBUG_OUT" > "$DEBUG_OUT.sha256"
+          sha256sum "$RELEASE_OUT" > "$RELEASE_OUT.sha256"
+          {
+            echo "### APK verification"
+            echo
+            echo "Both variants use the same persistent signing certificate."
+            echo
+            echo "Certificate SHA-256: \`$DEBUG_CERT\`"
+            echo
+            echo '```text'
+            cat "$DEBUG_OUT.sha256" "$RELEASE_OUT.sha256"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: rm -f local.properties "$RUNNER_TEMP/xpomni-release.jks"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
           name: Xpomni-api-37.1-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            dist/Xpomni-api-37.1-debug.apk
+            dist/Xpomni-api-37.1-debug.apk.sha256
           if-no-files-found: error
-          compression-level: 0
           retention-days: 30
+          compression-level: 0
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: Xpomni-api-37.1-release
+          path: |
+            dist/Xpomni-api-37.1-release.apk
+            dist/Xpomni-api-37.1-release.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
